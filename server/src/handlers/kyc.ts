@@ -1,49 +1,128 @@
+import { db } from '../db';
+import { kycDocumentsTable, usersTable } from '../db/schema';
 import { type SubmitKycInput, type ReviewKycInput, type KycDocument } from '../schema';
+import { eq, desc } from 'drizzle-orm';
 
 export async function submitKyc(userId: number, input: SubmitKycInput): Promise<KycDocument> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to submit KYC documents for user verification.
-    // Steps: 1. Save KYC document URLs, 2. Set status to pending, 3. Update user KYC status
-    return Promise.resolve({
-        id: 1,
+  try {
+    // Check if user exists
+    const user = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .execute();
+
+    if (user.length === 0) {
+      throw new Error('User not found');
+    }
+
+    // Insert KYC document record
+    const result = await db.insert(kycDocumentsTable)
+      .values({
         user_id: userId,
         id_card_url: input.id_card_url,
         selfie_url: input.selfie_url,
-        status: 'pending' as const,
-        rejection_reason: null,
-        submitted_at: new Date(),
-        reviewed_at: null,
-        reviewed_by: null
-    });
+        status: 'pending'
+      })
+      .returning()
+      .execute();
+
+    // Update user's KYC status to pending
+    await db.update(usersTable)
+      .set({ 
+        kyc_status: 'pending',
+        updated_at: new Date()
+      })
+      .where(eq(usersTable.id, userId))
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('KYC submission failed:', error);
+    throw error;
+  }
 }
 
 export async function getKycStatus(userId: number): Promise<KycDocument | null> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to get the current KYC status and documents for a user.
-    // Steps: 1. Query KYC documents table by user_id, 2. Return latest KYC document
-    return Promise.resolve(null);
+  try {
+    // Get the latest KYC document for the user
+    const results = await db.select()
+      .from(kycDocumentsTable)
+      .where(eq(kycDocumentsTable.user_id, userId))
+      .orderBy(desc(kycDocumentsTable.submitted_at))
+      .limit(1)
+      .execute();
+
+    return results.length > 0 ? results[0] : null;
+  } catch (error) {
+    console.error('Failed to get KYC status:', error);
+    throw error;
+  }
 }
 
 export async function getPendingKycRequests(): Promise<KycDocument[]> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to get all pending KYC requests for admin review.
-    // Steps: 1. Query KYC documents with status 'pending', 2. Include user information
-    return Promise.resolve([]);
+  try {
+    // Get all pending KYC requests
+    const results = await db.select()
+      .from(kycDocumentsTable)
+      .where(eq(kycDocumentsTable.status, 'pending'))
+      .orderBy(desc(kycDocumentsTable.submitted_at))
+      .execute();
+
+    return results;
+  } catch (error) {
+    console.error('Failed to get pending KYC requests:', error);
+    throw error;
+  }
 }
 
 export async function reviewKyc(adminId: number, input: ReviewKycInput): Promise<KycDocument> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is to review and approve/reject KYC documents.
-    // Steps: 1. Update KYC status, 2. Set reviewer and review date, 3. Update user KYC status
-    return Promise.resolve({
-        id: input.kyc_id,
-        user_id: 1,
-        id_card_url: 'placeholder_url',
-        selfie_url: 'placeholder_url',
+  try {
+    // Verify admin exists
+    const admin = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, adminId))
+      .execute();
+
+    if (admin.length === 0) {
+      throw new Error('Admin not found');
+    }
+
+    // Get the KYC document to verify it exists and get user_id
+    const kycDoc = await db.select()
+      .from(kycDocumentsTable)
+      .where(eq(kycDocumentsTable.id, input.kyc_id))
+      .execute();
+
+    if (kycDoc.length === 0) {
+      throw new Error('KYC document not found');
+    }
+
+    const userId = kycDoc[0].user_id;
+
+    // Update KYC document with review
+    const result = await db.update(kycDocumentsTable)
+      .set({
         status: input.status,
         rejection_reason: input.rejection_reason || null,
-        submitted_at: new Date(),
         reviewed_at: new Date(),
         reviewed_by: adminId
-    });
+      })
+      .where(eq(kycDocumentsTable.id, input.kyc_id))
+      .returning()
+      .execute();
+
+    // Update user's KYC status
+    await db.update(usersTable)
+      .set({ 
+        kyc_status: input.status,
+        updated_at: new Date()
+      })
+      .where(eq(usersTable.id, userId))
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('KYC review failed:', error);
+    throw error;
+  }
 }
